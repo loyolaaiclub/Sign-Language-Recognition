@@ -8,6 +8,12 @@ model = load_model('collected_data_model.h5')
 
 # Define the labels (make sure these match the order during training)
 labels = ['hello', 'bye', 'goodbye']  # Add more based on your dataset
+include_not_speaking = True  # Set to True if you want to include "not speaking"
+if include_not_speaking:
+    labels.append('not speaking')  # Add a "not speaking" label
+
+# Confidence threshold for "not speaking"
+confidence_threshold = 0.8 if include_not_speaking else 0.0
 
 def preprocess_frame(frame):
     """
@@ -30,37 +36,59 @@ def main():
 
     print("Press 'q' to exit")
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Failed to read frame from webcam")
-            break
+    # Initialize variables for tracking predictions
+    previous_prediction = None
+    prediction_sequence = []
 
-        # Flip frame horizontally for a mirror effect
-        frame = cv2.flip(frame, 1)
+    # Open a file to save the prediction sequence
+    with open("predictions.txt", "w") as file:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("Error: Failed to read frame from webcam")
+                break
 
-        # Preprocess the frame
-        preprocessed = preprocess_frame(frame)
+            # Flip frame horizontally for a mirror effect
+            frame = cv2.flip(frame, 1)
 
-        # Predict the gesture
-        predictions = model.predict(preprocessed, verbose=0)
-        predicted_label = labels[np.argmax(predictions)]
-        confidence = np.max(predictions)
+            # Preprocess the frame
+            preprocessed = preprocess_frame(frame)
 
-        # Display prediction on the frame
-        text = f"Prediction: {predicted_label} ({confidence:.2f})"
-        cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            # Predict the gesture
+            predictions = model.predict(preprocessed, verbose=0)
+            confidence = np.max(predictions)
+            predicted_label = labels[np.argmax(predictions)]
 
-        # Show the webcam feed
-        cv2.imshow("Sign Language Detector", frame)
+            # Apply "not speaking" logic
+            if include_not_speaking and confidence < confidence_threshold:
+                predicted_label = 'not speaking'
 
-        # Exit on 'q' key press
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+            # Save prediction if it changes
+            if predicted_label != previous_prediction:
+                prediction_sequence.append(predicted_label)
+                file.write(predicted_label + '\n')
+                file.flush()  # Ensure the file gets updated immediately
+                previous_prediction = predicted_label
+
+            # Display the current prediction and sequence
+            text = f"Prediction: {predicted_label} ({confidence:.2f})"
+            sequence_text = " ".join(prediction_sequence)
+            cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame, "Sequence: " + sequence_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+
+            # Show the webcam feed
+            cv2.imshow("Sign Language Detector", frame)
+
+            # Exit on 'q' key press
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
     # Cleanup resources
     cap.release()
     cv2.destroyAllWindows()
+
+    # Save the final sequence to the file
+    print("\nPrediction sequence saved to 'predictions.txt'.")
 
 if __name__ == "__main__":
     main()
