@@ -14,6 +14,14 @@ def collect_data():
     data_path = os.path.join('data', label)
     os.makedirs(data_path, exist_ok=True)
 
+    # Determine the starting index for new files
+    existing_files = [f for f in os.listdir(data_path) if f.startswith(label) and f.endswith('.npz')]
+    if existing_files:
+        existing_indices = [int(f.split('_')[-1].split('.')[0]) for f in existing_files]
+        start_index = max(existing_indices) + 1
+    else:
+        start_index = 0
+
     # Camera setup with macOS fixes
     cap = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)  # macOS-specific backend
     if not cap.isOpened():
@@ -88,7 +96,7 @@ def collect_data():
             elapsed = (datetime.now() - start_time).total_seconds()
             if elapsed >= clip_duration:
                 # Save as compressed numpy array
-                output_path = os.path.join(data_path, f"{label}_{sample_count}.npz")
+                output_path = os.path.join(data_path, f"{label}_{start_index + sample_count}.npz")
                 np.savez_compressed(output_path, np.array(frames))
 
                 sample_count += 1
