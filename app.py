@@ -3,10 +3,10 @@ import os
 import cv2
 import numpy as np
 import mediapipe as mp
-import tensorflow as tf
+from keras.models import load_model
 
-# Load the trained model (from the CSV-based training pipeline)
-model = tf.keras.models.load_model('collected_data_model.h5')
+# Load the trained model (saved as a Keras file, e.g. "collected_data_model.keras")
+model = load_model('collected_data_model.keras')
 
 # Dynamically load labels from the data directory (each subfolder corresponds to a label)
 data_dir = "data"
@@ -19,34 +19,34 @@ mp_drawing = mp.solutions.drawing_utils
 
 def extract_keypoints(results):
     """
-    Extracts and concatenates keypoints from the holistic results.
-    If a particular landmark is not detected, returns an array of zeros.
+    Extract and concatenate keypoints from the holistic results.
+    If a particular landmark set is not detected, returns a zero vector.
     Expected dimensions:
       - Pose: 33 landmarks x 4 values = 132
       - Face: 468 landmarks x 3 values = 1404
-      - Left hand: 21 landmarks x 3 values = 63
-      - Right hand: 21 landmarks x 3 values = 63
+      - Left Hand: 21 landmarks x 3 values = 63
+      - Right Hand: 21 landmarks x 3 values = 63
     Total expected features: 132 + 1404 + 63 + 63 = 1662.
     """
-    # Pose
+    # Pose landmarks
     if results.pose_landmarks:
         pose = np.array([[lm.x, lm.y, lm.z, lm.visibility] for lm in results.pose_landmarks.landmark]).flatten()
     else:
         pose = np.zeros(33 * 4)
     
-    # Face
+    # Face landmarks
     if results.face_landmarks:
         face = np.array([[lm.x, lm.y, lm.z] for lm in results.face_landmarks.landmark]).flatten()
     else:
         face = np.zeros(468 * 3)
     
-    # Left Hand
+    # Left hand landmarks
     if results.left_hand_landmarks:
         left_hand = np.array([[lm.x, lm.y, lm.z] for lm in results.left_hand_landmarks.landmark]).flatten()
     else:
         left_hand = np.zeros(21 * 3)
     
-    # Right Hand
+    # Right hand landmarks
     if results.right_hand_landmarks:
         right_hand = np.array([[lm.x, lm.y, lm.z] for lm in results.right_hand_landmarks.landmark]).flatten()
     else:
@@ -61,7 +61,7 @@ def main():
         print("Error: Cannot access webcam.")
         return
 
-    # Initialize holistic with reasonable detection/tracking confidence thresholds
+    # Initialize MediaPipe Holistic with defined detection/tracking thresholds.
     with mp_holistic.Holistic(min_detection_confidence=0.5,
                               min_tracking_confidence=0.5) as holistic:
         while True:
@@ -70,38 +70,38 @@ def main():
                 print("Error: Failed to read frame from webcam.")
                 break
             
-            # Flip the frame horizontally for a mirror-effect
+            # Flip the frame horizontally for a mirror effect.
             frame = cv2.flip(frame, 1)
-
-            # Convert BGR to RGB for MediaPipe processing
+            
+            # Convert BGR image to RGB for MediaPipe processing.
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image.flags.writeable = False
             results = holistic.process(image)
             image.flags.writeable = True
 
-            # Draw landmarks on the frame for visual feedback
+            # Draw landmarks on the frame for visual feedback.
             mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_holistic.POSE_CONNECTIONS)
             mp_drawing.draw_landmarks(frame, results.face_landmarks, mp_holistic.FACEMESH_TESSELATION)
             mp_drawing.draw_landmarks(frame, results.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS)
             mp_drawing.draw_landmarks(frame, results.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS)
 
-            # Extract keypoints and create input for the model
+            # Extract keypoints and prepare the input vector.
             keypoints = extract_keypoints(results)
-            input_data = keypoints.reshape(1, -1)  # Shape must match model's input shape (1, 1662)
+            input_data = keypoints.reshape(1, -1)  # Shape: (1, 1662)
 
-            # Predict gesture from the keypoints
+            # Predict the gesture using the loaded model.
             predictions = model.predict(input_data, verbose=0)
             confidence = np.max(predictions)
             predicted_label = labels[np.argmax(predictions)]
 
-            # Overlay prediction text on the frame
+            # Overlay the prediction result on the frame.
             text = f"Prediction: {predicted_label} ({confidence:.2f})"
             cv2.putText(frame, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-            # Display the frame
+            # Show the processed video feed.
             cv2.imshow("ASL Recognition", frame)
             
-            # Exit when 'q' is pressed
+            # Exit if the user presses 'q'.
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
