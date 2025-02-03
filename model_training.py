@@ -80,5 +80,5 @@ if __name__ == "__main__":
     model.fit(X, y, epochs=10, batch_size=32, validation_split=0.2)
     
     # Save the trained model
-    model.save("collected_data_model.h5")
-    print("Model training complete. Saved as 'collected_data_model.h5'.")
+    model.save("collected_data_model.keras")
+    print("Model training complete. Saved as 'collected_data_model.keras'.")
