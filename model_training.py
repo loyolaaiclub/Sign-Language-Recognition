@@ -2,7 +2,7 @@ import os
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Rescaling, BatchNormalization, Dropout, GlobalAveragePooling2D
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, GlobalAveragePooling2D, Dense, Dropout, BatchNormalization, Rescaling
 from tensorflow.keras.utils import to_categorical
 
 def load_collected_data(data_dir):
@@ -23,8 +23,8 @@ def load_collected_data(data_dir):
     return X, y, label_map
 
 def preprocess_collected_data(X, y):
-    # Normalize pixel values
-    X = X.astype('float32') / 255.0
+    # Instead of normalizing here, we include normalization in the model with Rescaling.
+    X = X.astype('float32')
     # Add channel dimension for grayscale images
     X = X[..., np.newaxis]
     # One-hot encode labels
@@ -37,13 +37,16 @@ def build_classification_model(input_shape, num_classes):
         Conv2D(32, (3, 3), activation='relu'),
         BatchNormalization(),
         MaxPooling2D((2, 2)),
+        Dropout(0.25),
         
         Conv2D(64, (3, 3), activation='relu'),
         BatchNormalization(),
         MaxPooling2D((2, 2)),
+        Dropout(0.25),
         
         GlobalAveragePooling2D(),
         Dense(128, activation='relu'),
+        BatchNormalization(),
         Dropout(0.5),
         Dense(num_classes, activation='softmax')
     ])
@@ -69,9 +72,15 @@ if __name__ == "__main__":
     num_classes = len(label_mapping)
     model = build_classification_model(input_shape, num_classes)
 
-    # Train the model
-    model.fit(X, y, epochs=10, batch_size=32, validation_split=0.2)
+    # Define callbacks
+    callbacks = [
+        tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),
+        tf.keras.callbacks.ModelCheckpoint('collected_data_model.h5', save_best_only=True)
+    ]
 
-    # Save the trained model
-    model.save("collected_data_model.h5")
-    print("Model training complete. Saved as 'collected_data_model.h5'.")
+    # Train the model
+    model.fit(X, y, epochs=10, batch_size=32, validation_split=0.2, callbacks=callbacks)
+
+    # Save the trained model (if not already saved via ModelCheckpoint)
+    model.save("collected_data_model_final.h5")
+    print("Model training complete. Saved as 'collected_data_model_final.h5'.")
