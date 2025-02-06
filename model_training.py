@@ -2,7 +2,7 @@ import os
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Rescaling
 from tensorflow.keras.utils import to_categorical
 
 def load_collected_data(data_dir):
@@ -33,6 +33,7 @@ def preprocess_collected_data(X, y):
 
 def build_classification_model(input_shape, num_classes):
     model = Sequential([
+        Rescaling(1./255, input_shape=input_shape),
         Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
         MaxPooling2D((2, 2)),
         Conv2D(64, (3, 3), activation='relu'),
