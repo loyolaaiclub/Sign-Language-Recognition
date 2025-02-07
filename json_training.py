@@ -10,6 +10,7 @@ import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense
 from tensorflow.keras.utils import to_categorical
+import concurrent.futures
 
 # Use Certifi SSL Certificates to fix SSL errors
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
@@ -30,6 +31,23 @@ def sanitize_youtube_url(url):
     if not url.startswith("http"):
         return "https://" + url
     return url
+
+def download_and_process(record):
+    url = record.get("url", None)
+    if not url:
+        return None
+    
+    video_path = download_youtube_video(url)
+    if not video_path:
+        return None
+
+    frame = get_frame_from_video(video_path, record.get("start_time", 0.0))
+    delete_video(video_path)  # Remove after processing
+    return (frame, record.get("clean_text", "unknown"))
+
+with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    results = list(executor.map(download_and_process, data))
+
 
 def get_video_id(url):
     """Extract the YouTube video ID from the URL."""
