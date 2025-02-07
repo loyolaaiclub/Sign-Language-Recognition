@@ -114,6 +114,23 @@ def get_frame_from_video(video_path, time_sec):
 
     return frame
 
+def get_multiple_frames(video_path, start_time, end_time, num_frames=5):
+    """Extract multiple frames between start_time and end_time."""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return []
+    
+    frames = []
+    for i in range(num_frames):
+        time_sec = start_time + i * (end_time - start_time) / (num_frames - 1)
+        cap.set(cv2.CAP_PROP_POS_MSEC, time_sec * 1000)
+        ret, frame = cap.read()
+        if ret:
+            frames.append(frame)
+
+    cap.release()
+    return frames
+
 # -------------------------------
 # DATA LOADING & PREPROCESSING
 # -------------------------------
