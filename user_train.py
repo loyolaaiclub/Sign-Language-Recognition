@@ -9,7 +9,7 @@ import mediapipe as mp
 def collect_data():
     # ---------------------------- User Setup ----------------------------------
     label = input("Enter the sign label to record (e.g., 'hello', 'bye'): ").lower()
-    samples_needed = 30
+    samples_needed = 2
     clip_duration = 2  # seconds
 
     # Create directory for saving data
@@ -104,13 +104,13 @@ def collect_data():
             break
         elif key == ord('s') and not recording:
             # Countdown before starting recording (3-second countdown)
-            for i in range(3, 0, -1):
-                ret, countdown_frame = cap.read()
-                countdown_frame = cv2.flip(countdown_frame, 1)
-                cv2.putText(countdown_frame, f"Recording in {i}", (10, 100),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
-                cv2.imshow('Data Collector', countdown_frame)
-                cv2.waitKey(1000)
+            # for i in range(3, 0, -1):
+            #     ret, countdown_frame = cap.read()
+            #     countdown_frame = cv2.flip(countdown_frame, 1)
+            #     cv2.putText(countdown_frame, f"Recording in {i}", (10, 100),
+            #                 cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+            #     cv2.imshow('Data Collector', countdown_frame)
+            #     cv2.waitKey(1000)
             recording = True
             frames = []
             landmarks_data = []
