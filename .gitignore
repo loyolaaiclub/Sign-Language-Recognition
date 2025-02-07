@@ -1,6 +1,10 @@
 # Notes
 notes
 
+# Predictions Outputs
+predictions.txt
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
