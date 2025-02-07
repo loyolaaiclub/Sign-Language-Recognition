@@ -2,8 +2,8 @@ import cv2
 import os
 import numpy as np
 from datetime import datetime
-import time  # For warmup delay
-import platform  # To detect OS type
+import time
+import platform
 import mediapipe as mp
 
 def collect_data():
@@ -12,48 +12,37 @@ def collect_data():
     samples_needed = 30
     clip_duration = 2  # seconds
 
-    # Create directories for saving data
+    # Create directory for saving data
     data_path = os.path.join('data', label)
     os.makedirs(data_path, exist_ok=True)
 
-    # Determine the starting index for new files
+    # Determine starting index based on existing files
     existing_files = [f for f in os.listdir(data_path) if f.startswith(label) and f.endswith('.npz')]
-    if existing_files:
-        existing_indices = [int(f.split('_')[-1].split('.')[0]) for f in existing_files]
-        start_index = max(existing_indices) + 1
-    else:
-        start_index = 0
+    start_index = max([int(f.split('_')[-1].split('.')[0]) for f in existing_files], default=-1) + 1
 
     # ---------------------------- Camera Setup ----------------------------------
     system_platform = platform.system().lower()
-    if system_platform == 'darwin':  # macOS
+    if system_platform == 'darwin':
         backend = cv2.CAP_AVFOUNDATION
     elif system_platform == 'windows':
         backend = cv2.CAP_DSHOW
-    else:  # Linux and others
+    else:
         backend = cv2.CAP_V4L2
 
     cap = cv2.VideoCapture(0, backend)
     if not cap.isOpened():
-        raise IOError(
-            "Cannot open webcam. Ensure:\n"
-            "1. Camera permissions are granted (check your OS settings)\n"
-            "2. No other apps are using the camera\n"
-            "3. Your camera is properly connected or built-in"
-        )
+        raise IOError("Cannot open webcam. Check camera permissions and connection.")
 
-    # Warmup the camera
     print("\nInitializing camera...")
     for _ in range(5):
         cap.read()
     time.sleep(1)
 
-    # Set camera properties
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_FPS, 15)
-    if system_platform != 'darwin':  # Skip codec setting for macOS
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+    if system_platform != 'darwin':
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
 
     print(f"\n=== Collecting {samples_needed} samples for '{label}' ===")
     print("Press 's' to start recording, 'q' to quit early")
@@ -68,41 +57,40 @@ def collect_data():
         min_tracking_confidence=0.5
     )
 
-    # -------------------------- Data Collection Loop --------------------------
     sample_count = 0
     recording = False
-    frames = []         # To store low-res grayscale frames for the sample
-    landmarks_data = [] # To store corresponding hand landmarks data
+    frames = []         # Stores resized grayscale frames
+    landmarks_data = [] # Stores corresponding hand landmarks
     window_open = True
 
     while sample_count < samples_needed and window_open:
         ret, frame = cap.read()
         if not ret:
-            print("Frame capture error - trying to recover...")
+            print("Frame capture error, retrying...")
             cap.release()
             time.sleep(1)
             cap = cv2.VideoCapture(0, backend)
             continue
 
-        # Mirror the frame for a more natural interaction
         frame = cv2.flip(frame, 1)
-
-        # Create a copy for display (with mediapipe drawings)
         display_frame = frame.copy()
 
-        # Convert the frame from BGR to RGB as required by MediaPipe
+        # Process frame with MediaPipe for hand detection
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(frame_rgb)
 
-        # Draw detected hand landmarks on the display copy
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
                 mp_drawing.draw_landmarks(display_frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            cv2.putText(display_frame, "Hand detected", (10, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        else:
+            cv2.putText(display_frame, "No hand detected", (10, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-        # Display instructions on the preview window
         text = f"Sample {sample_count + 1}/{samples_needed} | Press 's' to start"
         cv2.putText(display_frame, text, (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
         try:
             cv2.imshow('Data Collector', display_frame)
@@ -115,6 +103,14 @@ def collect_data():
         if key == ord('q'):
             break
         elif key == ord('s') and not recording:
+            # Countdown before starting recording (3-second countdown)
+            for i in range(3, 0, -1):
+                ret, countdown_frame = cap.read()
+                countdown_frame = cv2.flip(countdown_frame, 1)
+                cv2.putText(countdown_frame, f"Recording in {i}", (10, 100),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+                cv2.imshow('Data Collector', countdown_frame)
+                cv2.waitKey(1000)
             recording = True
             frames = []
             landmarks_data = []
@@ -122,14 +118,12 @@ def collect_data():
             print(f"Recording sample {sample_count + 1}...")
 
         if recording:
-            # --------------------- Save Frame Data ---------------------
-            # For storage, use the original frame (without drawings)
+            # --------------------- Capture and Process Frame ---------------------
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            small = cv2.resize(gray, (112, 112))  # Resize for compact storage
+            small = cv2.resize(gray, (112, 112))
             frames.append(small)
 
-            # --------------------- Extract Landmarks ---------------------
-            # If hands are detected, store each hand's normalized landmark coordinates
+            # --------------------- Extract Hand Landmarks ---------------------
             if results.multi_hand_landmarks:
                 frame_landmarks = []
                 for hand_landmarks in results.multi_hand_landmarks:
@@ -141,11 +135,10 @@ def collect_data():
                 frame_landmarks = []
             landmarks_data.append(frame_landmarks)
 
-            # Check if the recording duration has been reached
+            # Check if recording duration has been reached
             elapsed = (datetime.now() - start_time).total_seconds()
             if elapsed >= clip_duration:
                 output_path = os.path.join(data_path, f"{label}_{start_index + sample_count}.npz")
-                # Save both frames and landmarks. The landmarks are stored as an object array.
                 np.savez_compressed(output_path,
                                     frames=np.array(frames),
                                     landmarks=np.array(landmarks_data, dtype=object))
@@ -153,12 +146,10 @@ def collect_data():
                 recording = False
                 print(f"Saved sample {sample_count}")
 
-    # ------------------------ Cleanup Resources ------------------------------
     cap.release()
     cv2.destroyAllWindows()
-    hands.close()  # Properly close the MediaPipe Hands object
-    time.sleep(0.5)  # Allow windows to close
-
+    hands.close()
+    time.sleep(0.5)
     print(f"\nData collection complete! {sample_count} samples saved to {data_path}")
 
 if __name__ == "__main__":
