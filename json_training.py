@@ -7,22 +7,37 @@ import numpy as np
 import urllib.parse
 import subprocess
 import concurrent.futures
+import threading
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv3D, MaxPooling3D, Dropout, Flatten, Dense
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 
 # -------------------------------
 # CONFIGURATION
 # -------------------------------
 TRAIN_JSON_PATH = "MS-ASL/MSASL_train.json"
 TEST_JSON_PATH  = "MS-ASL/MSASL_test.json"
-VIDEOS_FOLDER = "videos"      # Temporary folder for video downloads
-IMG_SIZE = (112, 112)         # Target image size for each frame
-NUM_FRAMES = 5                # Number of frames to extract per video clip
+VIDEOS_FOLDER = "videos"          # Temporary folder for video downloads
+CACHE_FOLDER = "processed_data"   # Folder to cache processed clips (to save WiFi/data)
+CHECKPOINT_FOLDER = "checkpoints" # Folder for model checkpoints
+IMG_SIZE = (112, 112)             # Target image size for each frame
+NUM_FRAMES = 5                    # Number of frames to extract per video clip
 
-# Set up SSL certificates using Certifi to prevent SSL errors
+# Limit new downloads to prevent too much data usage over WiFi.
+# Only videos that are not yet cached will be downloaded.
+NEW_DOWNLOADS = 0
+MAX_NEW_DOWNLOADS = 50  # Adjust this limit as needed
+new_downloads_lock = threading.Lock()
+
+# Ensure required directories exist.
+os.makedirs(VIDEOS_FOLDER, exist_ok=True)
+os.makedirs(CACHE_FOLDER, exist_ok=True)
+os.makedirs(CHECKPOINT_FOLDER, exist_ok=True)
+
+# Set up SSL certificates using Certifi.
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
 
 # -------------------------------
@@ -49,7 +64,9 @@ def download_youtube_video(url, videos_folder=VIDEOS_FOLDER):
     video_id = get_video_id(url)
     filename = f"{video_id}.mp4"
     video_path = os.path.join(videos_folder, filename)
-    os.makedirs(videos_folder, exist_ok=True)
+    if os.path.exists(video_path):
+        print(f"[INFO] Video already exists: {video_path}")
+        return video_path
     try:
         print(f"[INFO] Downloading video {url} using yt-dlp ...")
         command = [
@@ -90,15 +107,12 @@ def get_multiple_frames(video_path, start_time, end_time, num_frames=NUM_FRAMES)
         print(f"[ERROR] Cannot open video {video_path}")
         return []
     frames = []
-    # Ensure we have a nonzero interval; if not, add a 1-second gap.
+    # Ensure a nonzero interval.
     if end_time <= start_time:
         end_time = start_time + 1.0
     for i in range(num_frames):
         # Uniformly sample frames within the interval.
-        if num_frames > 1:
-            time_sec = start_time + i * (end_time - start_time) / (num_frames - 1)
-        else:
-            time_sec = start_time
+        time_sec = start_time + i * (end_time - start_time) / (num_frames - 1) if num_frames > 1 else start_time
         cap.set(cv2.CAP_PROP_POS_MSEC, time_sec * 1000)
         ret, frame = cap.read()
         if ret:
@@ -111,7 +125,6 @@ def get_multiple_frames(video_path, start_time, end_time, num_frames=NUM_FRAMES)
 # -------------------------------
 # DATA AUGMENTATION
 # -------------------------------
-# Define a basic augmentation generator for image transformations.
 datagen = ImageDataGenerator(
     rotation_range=15,
     width_shift_range=0.1,
@@ -154,22 +167,46 @@ def video_generator(X, y, batch_size, datagen, augment=True):
                 yield batch_X, batch_y
 
 # -------------------------------
-# DATA LOADING & PREPROCESSING
+# DATA LOADING & PREPROCESSING WITH CACHING
 # -------------------------------
-def process_record(record, videos_folder=VIDEOS_FOLDER):
+def process_record(record, videos_folder=VIDEOS_FOLDER, cache_folder=CACHE_FOLDER):
     """
-    Download the video for a single record, extract NUM_FRAMES frames,
-    crop each frame using the provided bounding box, convert to grayscale,
-    resize, and normalize the image.
-    Returns:
-      (clip, label) where clip has shape (NUM_FRAMES, IMG_SIZE[0], IMG_SIZE[1], 1)
-      and label is the "clean_text" value.
-    If any step fails, returns None.
+    Process a single record:
+      - If a cached processed clip exists, load and return it.
+      - Otherwise, if within download limits, download the video,
+        extract NUM_FRAMES, crop using the provided bounding box,
+        convert to grayscale, resize, normalize, and then cache the result.
+    Returns (clip, label) or None on failure.
     """
     url = record.get("url", None)
     if not url:
         print("[WARNING] No URL found in record; skipping.")
         return None
+
+    video_id = get_video_id(url)
+    os.makedirs(cache_folder, exist_ok=True)
+    cache_file = os.path.join(cache_folder, f"{video_id}.npz")
+    
+    # Load from cache if available.
+    if os.path.exists(cache_file):
+        try:
+            data = np.load(cache_file, allow_pickle=True)
+            clip = data["clip"]
+            # If label is stored as an array, extract the single element.
+            label = data["label"].item() if isinstance(data["label"], np.ndarray) else data["label"]
+            print(f"[INFO] Loaded cached data for video {video_id}")
+            return clip, label
+        except Exception as e:
+            print(f"[WARNING] Failed to load cache for {video_id}: {e}")
+
+    # Check if we are within our new download limits.
+    global NEW_DOWNLOADS
+    with new_downloads_lock:
+        if NEW_DOWNLOADS >= MAX_NEW_DOWNLOADS:
+            print(f"[INFO] Maximum new downloads reached. Skipping video {video_id}.")
+            return None
+        NEW_DOWNLOADS += 1
+
     video_path = download_youtube_video(url, videos_folder)
     if video_path is None:
         print("[WARNING] Video could not be downloaded; skipping record.")
@@ -178,7 +215,7 @@ def process_record(record, videos_folder=VIDEOS_FOLDER):
     start_time = record.get("start_time", 0.0)
     end_time = record.get("end_time", start_time + 1.0)
     frames = get_multiple_frames(video_path, start_time, end_time, num_frames=NUM_FRAMES)
-    delete_video(video_path)  # Remove video after processing
+    delete_video(video_path)  # Clean up downloaded file.
 
     if len(frames) != NUM_FRAMES:
         print("[WARNING] Not enough frames extracted; skipping record.")
@@ -192,13 +229,13 @@ def process_record(record, videos_folder=VIDEOS_FOLDER):
             print("[WARNING] Invalid bounding box; skipping record.")
             return None
 
-        # Convert normalized box coordinates to pixel values.
+        # Convert normalized box coordinates to pixels.
         x_min = int(box[0] * frame_width)
         y_min = int(box[1] * frame_height)
         x_max = int(box[2] * frame_width)
         y_max = int(box[3] * frame_height)
 
-        # Validate crop dimensions (set a minimal crop size to avoid errors).
+        # Validate crop dimensions.
         if x_max <= x_min or y_max <= y_min or (x_max - x_min) < 10 or (y_max - y_min) < 10:
             print("[WARNING] Invalid crop dimensions; skipping record.")
             return None
@@ -211,35 +248,43 @@ def process_record(record, videos_folder=VIDEOS_FOLDER):
         # Convert to grayscale, resize, and normalize.
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         resized = cv2.resize(gray, IMG_SIZE)
-        normalized = resized.astype('float32') / 255.0
-        normalized = np.expand_dims(normalized, axis=-1)  # shape becomes (112, 112, 1)
+        normalized = resized.astype("float32") / 255.0
+        normalized = np.expand_dims(normalized, axis=-1)  # Shape: (112, 112, 1)
         processed_frames.append(normalized)
 
-    # Stack the processed frames into a clip.
-    clip = np.stack(processed_frames, axis=0)  # shape: (NUM_FRAMES, 112, 112, 1)
+    clip = np.stack(processed_frames, axis=0)  # Shape: (NUM_FRAMES, 112, 112, 1)
     label = record.get("clean_text", "unknown")
+
+    # Save processed clip to cache.
+    try:
+        np.savez_compressed(cache_file, clip=clip, label=label)
+        print(f"[INFO] Cached processed data for video {video_id}")
+    except Exception as e:
+        print(f"[WARNING] Could not save cache for {video_id}: {e}")
+
     return clip, label
 
-def load_data(json_path, videos_folder=VIDEOS_FOLDER):
+def load_data(json_path, videos_folder=VIDEOS_FOLDER, cache_folder=CACHE_FOLDER):
     """
-    Load JSON records, process each record in parallel, and return:
+    Load JSON records, process each record in parallel (using caching), and return:
       - clips: NumPy array of shape (N, NUM_FRAMES, IMG_SIZE[0], IMG_SIZE[1], 1)
-      - labels: list of text labels
+      - labels: list of text labels.
     """
-    with open(json_path, 'r') as f:
+    with open(json_path, "r") as f:
         data = json.load(f)
 
     clips = []
     labels = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [executor.submit(process_record, record, videos_folder) for record in data]
+        futures = [executor.submit(process_record, record, videos_folder, cache_folder) for record in data]
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
             if result is not None:
                 clip, label = result
                 clips.append(clip)
                 labels.append(label)
-    clips = np.array(clips)
+    if clips:
+        clips = np.array(clips)
     return clips, labels
 
 # -------------------------------
@@ -258,7 +303,7 @@ if __name__ == "__main__":
         print("[ERROR] No data loaded. Please check your JSON files and YouTube URL access.")
         exit(1)
 
-    # Create label-to-index mapping.
+    # Map labels to indices.
     unique_labels = sorted(list(set(y_train_text)))
     label_to_index = {label: idx for idx, label in enumerate(unique_labels)}
     print("Unique labels found:", unique_labels)
@@ -270,20 +315,20 @@ if __name__ == "__main__":
     y_train_cat = to_categorical(y_train, num_classes)
     y_test_cat  = to_categorical(y_test, num_classes)
 
-    # Build a simple Conv3D model for video clip classification.
+    # Build a simple Conv3D model.
     model = Sequential([
-        Conv3D(32, (3, 3, 3), activation='relu', input_shape=(NUM_FRAMES, IMG_SIZE[0], IMG_SIZE[1], 1)),
+        Conv3D(32, (3, 3, 3), activation="relu", input_shape=(NUM_FRAMES, IMG_SIZE[0], IMG_SIZE[1], 1)),
         MaxPooling3D(pool_size=(1, 2, 2)),
-        Conv3D(64, (3, 3, 3), activation='relu'),
+        Conv3D(64, (3, 3, 3), activation="relu"),
         MaxPooling3D(pool_size=(1, 2, 2)),
         Dropout(0.25),
         Flatten(),
-        Dense(128, activation='relu'),
+        Dense(128, activation="relu"),
         Dropout(0.5),
-        Dense(num_classes, activation='softmax')
+        Dense(num_classes, activation="softmax")
     ])
 
-    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
     model.summary()
 
     # Training parameters.
@@ -292,17 +337,33 @@ if __name__ == "__main__":
     steps_per_epoch = len(X_train) // batch_size
     validation_steps = len(X_test) // batch_size
 
-    # Create generators for training (with augmentation) and validation (without augmentation).
+    # Create data generators.
     train_gen = video_generator(X_train, y_train_cat, batch_size, datagen, augment=True)
     val_gen = video_generator(X_test, y_test_cat, batch_size, datagen, augment=False)
 
+    # Set up callbacks.
+    checkpoint_callback = ModelCheckpoint(
+        filepath=os.path.join(CHECKPOINT_FOLDER, "model_epoch_{epoch:02d}.h5"),
+        save_weights_only=False,
+        save_freq="epoch",
+        verbose=1
+    )
+    early_stopping_callback = EarlyStopping(
+        monitor="val_loss",
+        patience=3,
+        verbose=1,
+        restore_best_weights=True
+    )
+
+    # Train the model.
     model.fit(
         train_gen,
         steps_per_epoch=steps_per_epoch,
         epochs=epochs,
         validation_data=val_gen,
-        validation_steps=validation_steps
+        validation_steps=validation_steps,
+        callbacks=[checkpoint_callback, early_stopping_callback]
     )
 
-    model.save('collected_data_model.h5')
+    model.save("collected_data_model.h5")
     print("Model saved as collected_data_model.h5")
