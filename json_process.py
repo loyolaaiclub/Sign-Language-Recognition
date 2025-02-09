@@ -126,24 +126,24 @@ def process_record(record):
         print("[WARNING] No URL found; skipping record.")
         return
 
-    # Use the cleaned gesture as the label
+    video_id = get_video_id(url)
+    video_path = download_youtube_video(url)
+    
+    if video_path is None:
+        print("[WARNING] Download failed; skipping record.")
+        return  # Stop processing this record
+
+    # Move folder creation **AFTER** successful download
     gesture = record.get("clean_text", "unknown").strip().lower()
-    # Sanitize gesture name for folder use (remove spaces/punctuation)
-    gesture_folder = "".join(ch for ch in gesture if ch.isalnum())
+    gesture_folder = "".join(ch for ch in gesture if ch.isalnum())  # Remove spaces & special chars
     gesture_path = os.path.join(DATA_FOLDER, gesture_folder)
     os.makedirs(gesture_path, exist_ok=True)
 
-    video_id = get_video_id(url)
-    # Create a unique filename based on video ID and start time
+    # Create a unique filename for saving
     record_id = f"{video_id}_{str(record.get('start_time')).replace('.','_')}"
     npz_file = os.path.join(gesture_path, record_id + ".npz")
     if os.path.exists(npz_file):
         print(f"[INFO] Processed data already exists: {npz_file}")
-        return
-
-    video_path = download_youtube_video(url)
-    if video_path is None:
-        print("[WARNING] Download failed; skipping record.")
         return
 
     start_time = record.get("start_time", 0.0)
