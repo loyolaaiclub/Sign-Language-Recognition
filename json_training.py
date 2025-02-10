@@ -2,7 +2,7 @@
 """
 train_model.py
 
-This script loads the processed NPZ data from the folder structure created by prepare_data.py.
+This script loads the processed NPZ data from the folder structure created by json_process.py.
 Each subfolder in DATA_FOLDER corresponds to a gesture class. The script builds a dataset,
 maps each gesture (folder name) to a label index, and trains a Conv3D network.
 Data augmentation is applied on the fly to help with very limited examples per class.
