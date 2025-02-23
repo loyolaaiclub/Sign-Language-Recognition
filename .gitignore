@@ -1,6 +1,9 @@
 # Notes
 notes
 
+# NPZ Data
+*.npz
+
 # Predictions Outputs
 predictions.txt
 
