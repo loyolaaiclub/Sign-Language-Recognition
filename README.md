@@ -37,29 +37,23 @@ Options:
 - `--samples` (optional, default=30): Number of recordings to collect.
 - `--duration` (optional, default=2): Duration (in seconds) per recording.
 
-On macOS, use the macOS-specific script:
-
-```bash
-python user_train_macos.py --label hello --samples 30 --duration 2
-```
-
 ### 2. Training the Model
 Train the model using collected data:
 
 ```bash
-python model_training.py
+python3 training.py
 ```
 
 This script will:
 1. Load the recorded gesture data from the `data/` directory.
 2. Train a CNN model.
-3. Save the trained model as `collected_data_model.h5`.
+3. Save the trained model as `asl_model.h5`.
 
 ### 3. Running Real-Time Prediction
 Run the model to recognize gestures in real time:
 
 ```bash
-python app.py
+python3 app.py
 ```
 
 Press `q` to exit the application.
