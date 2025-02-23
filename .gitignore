@@ -1,8 +1,9 @@
 # Notes
 notes
 
-# NPZ Data
+# Raw Data
 *.npz
+/videos
 
 # Predictions Outputs
 predictions.txt
