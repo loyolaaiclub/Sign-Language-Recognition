@@ -1,7 +1,6 @@
 mediapipe==0.10.20
 opencv-python-headless==4.11.0.86
 pandas==2.2.3
-pip-chill==1.0.3
 pytube==15.0.0
 scikit-learn==1.6.1
 tensorflow==2.16.2
