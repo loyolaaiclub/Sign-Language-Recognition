@@ -29,13 +29,12 @@ model = tf.keras.models.load_model(MODEL_PATH)
 
 # Load labels from labels.txt
 labels_file_path = os.path.join(DATA_FOLDER, "labels.txt")
-with open(labels_file_path, "r") as file:
+with open(labels_file_path, "r", encoding="utf-8") as file:
     labels = [line.strip() for line in file.readlines()]
 
 # Append 'not speaking' label if needed
 if include_not_speaking:
     labels.append("not speaking")
-
 print("Loaded labels:", labels)
 
 # -------------------------------
