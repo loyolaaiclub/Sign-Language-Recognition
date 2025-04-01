@@ -5,3 +5,4 @@ pytube==15.0.0
 scikit-learn==1.6.1
 tensorflow==2.16.2
 yt-dlp==2025.1.26
+pyautogui==0.9.53

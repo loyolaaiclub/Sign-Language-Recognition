@@ -1,125 +1,117 @@
-#!/usr/bin/env python
-"""
-app.py
-
-This script uses a webcam to perform live prediction for ASL gestures using a trained
-Conv3D model. It collects a fixed number of frames to form a clip, preprocesses the clip,
-and then passes it to the model to obtain a prediction. The predicted label is then
-overlaid on the video feed.
-"""
-
+# app.py
 import cv2
+import mediapipe as mp
+import pyautogui
+import pickle
 import numpy as np
-import tensorflow as tf
-import os
+import pandas as pd  # Imported to convert features into a DataFrame
 
-# -------------------------------
-# CONFIGURATION
-# -------------------------------
-IMG_SIZE = (112, 112)         # Target size for each frame
-NUM_FRAMES = 5                # Number of frames per clip (temporal depth)
-DATA_FOLDER = "data"          # Folder that contains labels.txt
-MODEL_PATH = "asl_model.h5"   # Path to the trained model file
-include_not_speaking = False  # Set to True if you appended a "not speaking" label during training
+MODEL_FILE = "gesture_model.pkl"
 
-# -------------------------------
-# LOAD MODEL & LABELS
-# -------------------------------
-model = tf.keras.models.load_model(MODEL_PATH)
+# Load the trained model.
+with open(MODEL_FILE, "rb") as f:
+    model = pickle.load(f)
+print("DEBUG: Loaded model from", MODEL_FILE)
 
-# Load labels from labels.txt
-labels_file_path = os.path.join(DATA_FOLDER, "labels.txt")
-with open(labels_file_path, "r") as file:
-    labels = [line.strip() for line in file.readlines()]
+# Create the feature names list (pixel1 ... pixel784)
+feature_names = [f"pixel{i}" for i in range(1, 785)]
 
-# Append 'not speaking' label if needed
-if include_not_speaking:
-    labels.append("not speaking")
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
+cap = cv2.VideoCapture(0)
 
-print("Loaded labels:", labels)
+# Get screen size for cursor mapping.
+screen_width, screen_height = pyautogui.size()
+print(f"DEBUG: Screen size: {screen_width}x{screen_height}")
 
-# -------------------------------
-# PREPROCESSING FUNCTION FOR A CLIP
-# -------------------------------
-def preprocess_clip(frames):
-    """
-    Processes a list of frames and returns a 5D tensor for prediction:
-      - Converts each frame to grayscale.
-      - Resizes each frame to IMG_SIZE.
-      - Normalizes pixel values to [0, 1].
-      - Stacks frames to produce shape (NUM_FRAMES, height, width, 1).
-      - Adds a batch dimension, resulting in shape (1, NUM_FRAMES, height, width, 1).
-    """
-    processed_frames = []
-    for frame in frames:
-        # Convert BGR (from cv2) to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        # Resize the frame
-        resized = cv2.resize(gray, IMG_SIZE)
-        # Normalize pixel values
-        normalized = resized.astype("float32") / 255.0
-        processed_frames.append(normalized)
-    
-    # Stack frames along the time dimension: (NUM_FRAMES, IMG_SIZE[0], IMG_SIZE[1])
-    clip = np.stack(processed_frames, axis=0)
-    # Add channel dimension: (NUM_FRAMES, IMG_SIZE[0], IMG_SIZE[1], 1)
-    clip = np.expand_dims(clip, axis=-1)
-    # Add batch dimension: (1, NUM_FRAMES, IMG_SIZE[0], IMG_SIZE[1], 1)
-    clip = np.expand_dims(clip, axis=0)
-    return clip
+print("App running. Press 'q' to exit.")
 
-# -------------------------------
-# MAIN APPLICATION LOOP
-# -------------------------------
-def main():
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error: Cannot open webcam.")
-        return
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        print("DEBUG: Failed to grab frame.")
+        continue
 
-    print("Starting live ASL prediction. Press 'q' to exit.")
-    
-    frame_buffer = []      # Buffer to hold NUM_FRAMES frames
-    last_prediction = "None"  # To store the most recent prediction
+    frame = cv2.flip(frame, 1)
+    h, w, _ = frame.shape
+    print(f"DEBUG: Processing frame with shape: {frame.shape}")
+    image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = hands.process(image_rgb)
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Failed to capture frame.")
-            break
+    predicted_label = None
 
-        # Flip the frame horizontally for a mirror effect
-        frame = cv2.flip(frame, 1)
-
-        # Append current frame to buffer
-        frame_buffer.append(frame)
-
-        # When we have collected enough frames, process the clip
-        if len(frame_buffer) == NUM_FRAMES:
-            clip = preprocess_clip(frame_buffer)
-            predictions = model.predict(clip, verbose=0)
-            confidence = np.max(predictions)
-            predicted_index = np.argmax(predictions)
-            last_prediction = labels[predicted_index]
+    if results.multi_hand_landmarks:
+        print("DEBUG: Detected hand landmarks.")
+        for idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            x_coords = [int(lm.x * w) for lm in hand_landmarks.landmark]
+            y_coords = [int(lm.y * h) for lm in hand_landmarks.landmark]
+            print(f"DEBUG: Hand {idx} x_coords: {x_coords}")
+            print(f"DEBUG: Hand {idx} y_coords: {y_coords}")
             
-            # (Optional) Print the confidence for debugging:
-            # print(f"Predicted: {last_prediction} with confidence {confidence:.2f}")
+            x_min = max(min(x_coords) - 20, 0)
+            x_max = min(max(x_coords) + 20, w)
+            y_min = max(min(y_coords) - 20, 0)
+            y_max = min(max(y_coords) + 20, h)
+            print(f"DEBUG: Hand {idx} bounding box: ({x_min}, {y_min}), ({x_max}, {y_max})")
+            
+            cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
 
-            # Clear the buffer for the next clip. Alternatively, you could implement a sliding window.
-            frame_buffer = []
+            hand_img = frame[y_min:y_max, x_min:x_max]
+            if hand_img.size == 0:
+                print("DEBUG: Hand image is empty, skipping this hand.")
+                continue
 
-        # Overlay the last prediction on the current frame
-        cv2.putText(frame, f"Prediction: {last_prediction}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            # Convert to grayscale and resize to 28x28.
+            hand_gray = cv2.cvtColor(hand_img, cv2.COLOR_BGR2GRAY)
+            print(f"DEBUG: Hand gray image shape: {hand_gray.shape}")
+            hand_resized = cv2.resize(hand_gray, (28, 28))
+            print(f"DEBUG: Hand resized to: {hand_resized.shape}")
+            flattened = hand_resized.flatten()
+            print(f"DEBUG: Flattened feature vector shape: {flattened.shape}")
+            features = flattened.reshape(1, -1)
+            # Convert the NumPy array to a DataFrame with the correct column names.
+            features_df = pd.DataFrame(features, columns=feature_names)
 
-        cv2.imshow("ASL Live Prediction", frame)
+            try:
+                predicted_label = model.predict(features_df)[0]
+                print(f"DEBUG: Predicted label: {predicted_label}")
+            except Exception as e:
+                print("DEBUG: Prediction error:", e)
+                continue
 
-        # Break loop if 'q' is pressed
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+            cv2.putText(frame, f"Gesture: {predicted_label}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-    cap.release()
-    cv2.destroyAllWindows()
+            # --- Action Mapping ---
+            # Here we assume:
+            #    "3" -> move cursor based on the center of the hand bounding box
+            #    "6" -> trigger a click
+            #    (Any other label performs no action.)
+            if str(predicted_label) == "3":
+                center_x = (x_min + x_max) // 2
+                center_y = (y_min + y_max) // 2
+                # Map frame coordinates to screen coordinates.
+                cursor_x = int(center_x / w * screen_width)
+                cursor_y = int(center_y / h * screen_height)
+                print(f"DEBUG: Moving cursor to: ({cursor_x}, {cursor_y})")
+                pyautogui.moveTo(cursor_x, cursor_y)
+            elif str(predicted_label) == "6":
+                print("DEBUG: Triggering mouse click")
+                pyautogui.click()
+            else:
+                print("DEBUG: No action mapped for this label.")
 
-if __name__ == "__main__":
-    main()
+    else:
+        print("DEBUG: No hand landmarks detected.")
+
+    cv2.imshow("App - Press 'q' to exit", frame)
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        print("DEBUG: Exiting app loop.")
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+hands.close()
+print("DEBUG: Cleaned up and closed all resources.")
